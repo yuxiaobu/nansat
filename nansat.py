@@ -306,9 +306,9 @@ class Nansat(Domain):
             else:
                 # create VRT from resized array
                 srcVRT = VRT(array=array, nomem=nomem)
-                vrt2add = srcVRT.get_resized_vrt(self.shape()[1],
-                                                 self.shape()[0],
-                                                 resamplingAlg)
+                vrt2add = srcVRT.get_resized_warped_vrt(self.shape()[1],
+                                                        self.shape()[0],
+                                                        resamplingAlg)
             # set parameters
             bandNumber = 1
 
@@ -531,9 +531,8 @@ class Nansat(Domain):
 
         self.logger.info('New size/factor: (%f, %f)/%f' %
                         (newRasterXSize, newRasterYSize, factor))
-        
+
         return newRasterYSize, newRasterXSize
-        
 
     def resize(self, factor=1, width=None, height=None, eResampleAlg=-1):
         '''Proportional resize of the dataset.
@@ -541,13 +540,14 @@ class Nansat(Domain):
         The dataset is resized as (xSize*factor, ySize*factor) or
         (width, calulated height) or (calculated width, height).
         self.vrt is rewritten to the the downscaled sizes.
+
         Georeference is stored in the object. Useful e.g. for export.
         If GCPs are given in a dataset, they are also rewritten.
         If resize() is called without any parameters then previsous
         resizing/reprojection cancelled.
 
         WARNING: It seems like the function is presently not working for complex
-        bands and pixelfunction bands - in case this kind of data is needed 
+        bands bands - in case this kind of data is needed
         it should be copied to a numpy array which is added as a band before
         resizing.
 
@@ -560,6 +560,9 @@ class Nansat(Domain):
             eResampleAlg : int (GDALResampleAlg), optional
                 -1 : Average,
                 0 : NearestNeighbour,
+                1 : BILINEAR,
+                2 : BICUBIC
+                3 : ANTIALIAS
 
         Modifies
         ---------
@@ -573,113 +576,10 @@ class Nansat(Domain):
             self.vrt = self.raw.copy()
             return
 
-        # check if eResampleAlg is valid
-        if eResampleAlg > 0:
-            self.logger.error('''
-                            eResampleAlg must be <= 0.
-                            Use resize_without_georeference instead''')
-            return
-
-        # get new shape
-        newRasterYSize, newRasterXSize = self._get_new_rastersize(factor,
-                                                              width,
-                                                              height)
-
-        # Get XML content from VRT-file
-        vrtXML = self.vrt.read_xml()
-        node0 = Node.create(vrtXML)
-
-        # replace rasterXSize in <VRTDataset>
-        node0.replaceAttribute('rasterXSize', str(newRasterXSize))
-        node0.replaceAttribute('rasterYSize', str(newRasterYSize))
-
-        rasterYSize, rasterXSize = self.shape()
-
-        # replace xSize in <DstRect> of each source
-        for iNode1 in node0.nodeList('VRTRasterBand'):
-            for sourceName in ['ComplexSource', 'SimpleSource']:
-                for iNode2 in iNode1.nodeList(sourceName):
-                    iNodeDstRect = iNode2.node('DstRect')
-                    iNodeDstRect.replaceAttribute('xSize',
-                                                  str(newRasterXSize))
-                    iNodeDstRect.replaceAttribute('ySize',
-                                                  str(newRasterYSize))
-            # if method=-1, overwrite 'ComplexSource' to 'AveragedSource'
-            if eResampleAlg == -1:
-                iNode1.replaceTag('ComplexSource', 'AveragedSource')
-                iNode1.replaceTag('SimpleSource', 'AveragedSource')
-
-        # Edit GCPs to correspond to the downscaled size
-        if node0.node('GCPList'):
-            for iNode in node0.node('GCPList').nodeList('GCP'):
-                pxl = float(iNode.getAttribute('Pixel')) * factor
-                if pxl > float(rasterXSize):
-                    pxl = rasterXSize
-                iNode.replaceAttribute('Pixel', str(pxl))
-                lin = float(iNode.getAttribute('Line')) * factor
-                if lin > float(rasterYSize):
-                    lin = rasterYSize
-                iNode.replaceAttribute('Line', str(lin))
-
-        # Write the modified elemements into VRT
-        self.vrt.write_xml(str(node0.rawxml()))
-
-
-    def resize_lite(self, factor=1, width=None,
-                                    height=None, eResampleAlg=1):
-        '''Proportional resize of the dataset. No georeference kept.
-
-        The dataset is resized as (xSize*factor, ySize*factor) or
-        (width, calulated height) or (calculated width, height).
-        self.vrt is rewritten to the the downscaled sizes.
-        No georeference (useful e.g. for export) is stored in the object. 
-        If resize() is called without any parameters then previsous
-        resizing/reprojection cancelled.
-
-        WARNING: It seems like the function is presently not working for complex
-        bands and pixelfunction bands - in case this kind of data is needed 
-        it should be copied to a numpy array which is added as a band before
-        resizing.
-
-        Parameters
-        -----------
-        Either factor, or width, or height should be given:
-            factor : float, optional, default=1
-            width : int, optional
-            height : int, optional
-            eResampleAlg : int (GDALResampleAlg), optional
-                1 : Bilinear,
-                2 : Cubic,
-                3 : CubicSpline,
-                4 : Lancoz
-                if eResampleAlg > 0 : VRT.get_resized_vrt() is used
-
-        Modifies
-        ---------
-        self.vrt.dataset : VRT dataset of VRT object
-            raster size are modified to downscaled size.
-
-        '''
-        # resize back to original size/setting
-        if factor == 1 and width is None and height is None:
-            self.vrt = self.raw.copy()
-            return
-
-        # check if eResampleAlg is valid
-        if eResampleAlg < 1:
-            self.logger.error('''
-                            eResampleAlg must be > 0.
-                            Use resize() instead''')
-            return
-
-        # get new shape
-        newRasterYSize, newRasterXSize = self._get_new_rastersize(factor,
-                                                              width,
-                                                              height)
-
-        # apply affine transformation using reprojection
-        self.vrt = self.vrt.get_resized_vrt(newRasterXSize,
-                                            newRasterYSize,
+        # replce self.vrt to desized VRT
+        self.vrt = self.raw.get_resized_vrt(factor,
+                                            width,
+                                            height,
                                             eResampleAlg)
 
     def get_GDALRasterBand(self, bandID=1):
@@ -1406,7 +1306,7 @@ class Nansat(Domain):
         ----------
         fileName : str
             name of the output file
-        bandID : int or str, [1]
+        bandID : int or str
             number of name of the band
         driver : str, ['netCDF']
             name of the GDAL Driver (format) to use
