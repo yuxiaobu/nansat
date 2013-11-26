@@ -301,9 +301,9 @@ class Nansat(Domain):
             else:
                 # create VRT from resized array
                 srcVRT = VRT(array=array, nomem=nomem)
-                vrt2add = srcVRT.get_resized_vrt(self.shape()[1],
-                                                 self.shape()[0],
-                                                 resamplingAlg)
+                vrt2add = srcVRT.get_resized_warped_vrt(self.shape()[1],
+                                                        self.shape()[0],
+                                                        resamplingAlg)
             # set parameters
             bandNumber = 1
 
@@ -537,6 +537,7 @@ class Nansat(Domain):
         The dataset is resized as (xSize*factor, ySize*factor) or
         (width, calulated height) or (calculated width, height).
         self.vrt is rewritten to the the downscaled sizes.
+
         Georeference is stored in the object. Useful e.g. for export.
         If GCPs are given in a dataset, they are also rewritten.
         If resize() is called without any parameters then previsous
@@ -556,6 +557,9 @@ class Nansat(Domain):
             eResampleAlg : int (GDALResampleAlg), optional
                 -1 : Average,
                 0 : NearestNeighbour,
+                1 : BILINEAR,
+                2 : BICUBIC
+                3 : ANTIALIAS
 
         Modifies
         ---------
@@ -1399,7 +1403,7 @@ class Nansat(Domain):
         ----------
         fileName : str
             name of the output file
-        bandID : int or str, [1]
+        bandID : int or str
             number of name of the band
         driver : str, ['netCDF']
             name of the GDAL Driver (format) to use
