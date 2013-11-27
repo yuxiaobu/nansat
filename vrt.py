@@ -1,4 +1,4 @@
-# Name:    nansat.py
+# Name:    vrt.py
 # Purpose: Container of VRT and GeolocationDomain classes
 # Authors:      Asuka Yamakawa, Anton Korosov, Knut-Frode Dagestad,
 #               Morten W. Hansen, Alexander Myasoyedov,
@@ -17,7 +17,6 @@
 import tempfile
 
 from nansat_tools import *
-
 
 class GeolocationArray():
     '''Container for GEOLOCATION ARRAY data
@@ -778,6 +777,21 @@ class VRT():
             # shallow copy (only geometadata)
             vrt = VRT(gdalDataset=self.dataset,
                       geolocationArray=self.geolocationArray)
+
+        if 'adsVRTs' in dir(self):
+            vrt.adsVRTs = self.adsVRTs
+
+        # iterative copy of self.vrt
+        print 'copy vrt.vrt'
+        if self.vrt is not None:
+            vrt.vrt = self.vrt.copy()
+            if 'adsVRTs' in dir(self.vrt):
+                vrt.vrt.adsVRTs = self.vrt.adsVRTs
+            vrtXML = vrt.read_xml()
+            node0 = Node.create(vrtXML)
+            node0.node('SourceDataset').value = str(vrt.vrt.fileName)
+            vrt.write_xml(str(node0.rawxml()))
+
         return vrt
 
     def add_geolocationArray(self, geolocationArray=None):
@@ -815,7 +829,8 @@ class VRT():
         # add GEOLOCATION ARRAY metadata (empty if geolocationArray is empty)
         self.dataset.SetMetadata('', 'GEOLOCATION')
 
-    def get_resized_vrt(self, xSize, ySize, use_geolocationArray=False,
+    def get_resized_vrt(self, xSize, ySize,
+                        use_geolocationArray=False,
                         use_gcps=False, use_geotransform=False,
                         eResampleAlg=1, **kwargs):
 
@@ -835,30 +850,59 @@ class VRT():
         VRT object : Resized VRT object
 
         '''
+        # get resize factor
+        resizeFactor = float(xSize) / float(self.dataset.RasterXSize)
+        geoTransform = list(self.dataset.GetGeoTransform())
+
+        dstGCPs = []
+        # get SRS
+        dstSRS = self.dataset.GetProjection()
+        if dstSRS == '':
+            dstSRS = self.dataset.GetGCPProjection()
+            geoTransform = None
+            # Create resized GCPs
+            srcGCPs = self.dataset.GetGCPs()
+            for srcGCP in srcGCPs:
+                dstGCP = gdal.GCP(srcGCP.GCPX,
+                                  srcGCP.GCPY,
+                                  srcGCP.GCPZ,
+                                  srcGCP.GCPPixel * resizeFactor,
+                                  srcGCP.GCPLine * resizeFactor,
+                                  srcGCP.Info,
+                                  srcGCP.Id)
+                dstGCPs.append(dstGCP)
+
         # modify GeoTransform: set resolution from new X/Y size
-        geoTransform = (0,
-                        float(self.dataset.RasterXSize) / float(xSize),
-                        0,
-                        self.dataset.RasterYSize,
-                        0,
-                        - float(self.dataset.RasterYSize) / float(ySize))
+        resizedGeoTransform = (0,
+                               1.0 / resizeFactor,
+                               0,
+                               self.dataset.RasterYSize,
+                               0,
+                               -1.0 / resizeFactor)
 
         # update size and GeoTranform in XML of the warped VRT object
-        warpedVRT = self.get_warped_vrt(xSize=xSize, ySize=ySize,
-                                        geoTransform=geoTransform,
-                                        use_geolocationArray=use_geolocationArray,
-                                        use_gcps=use_gcps,
-                                        use_geotransform=use_geotransform,
-                                        eResampleAlg=eResampleAlg)
+        reseizedVRT = self.get_warped_vrt(xSize=xSize, ySize=ySize,
+                                   dstSRS=dstSRS,
+                                   geoTransform=resizedGeoTransform,
+                                   dstGCPs=dstGCPs,
+                                   use_geolocationArray=use_geolocationArray,
+                                   use_gcps=use_gcps,
+                                   use_geotransform=use_geotransform,
+                                   eResampleAlg=eResampleAlg)
+
+        # if srcDs has geoTransform, set resized geoTransform
+        if geoTransform is not None:
+            geoTransform[1] = geoTransform[1] / resizeFactor
+            geoTransform[5] = geoTransform[5] / resizeFactor
+            geoTransform = tuple(geoTransform)
+            reseizedVRT.dataset.SetGeoTransform(geoTransform)
 
         # set metadata
-        warpedVRT.dataset.SetMetadata(self.dataset.GetMetadata_Dict())
+        vrtMetadata = reseizedVRT.vrt.dataset.GetMetadata()
+        reseizedVRT.dataset.SetMetadata(vrtMetadata)
 
-        # add source VRT (self) to the warpedVRT
-        # in order not to loose RAW file from self
-        warpedVRT.srcVRT = self
+        return reseizedVRT
 
-        return warpedVRT
 
     def _remove_geotransform(self):
         '''Remove GeoTransfomr from VRT Object
@@ -1072,6 +1116,7 @@ class VRT():
         self.logger.debug('Run AutoCreateWarpedVRT...')
         warpedVRT = gdal.AutoCreateWarpedVRT(srcVRT.dataset, None,
                                              acwvSRS, eResampleAlg)
+
         # TODO: implement the below option for proper handling of
         # stereo projections
         # warpedVRT = gdal.AutoCreateWarpedVRT(srcVRT.dataset, '',
@@ -1131,7 +1176,7 @@ class VRT():
         """
         # overwrite XML of the warped VRT file with uprated size and geotranform
         warpedVRT.write_xml(str(node0.rawxml()))
-
+        warpedVRT.export("c:/Users/asumak/Data/output/warpedVRT1217.vrt")
         # apply thin-spline-transformation option
         if use_gcps and tps:
             tmpVRTXML = warpedVRT.read_xml()
@@ -1162,9 +1207,12 @@ class VRT():
             warpedVRT.add_geolocationArray(dstGeolocationArray)
             warpedVRT.dataset.SetProjection('')
 
+        # Copy self into self.vrt
+        warpedVRT.vrt = self.copy()
+
         # replace the reference from srcVRT to self
         self.logger.debug('replace the reference from srcVRT to self')
-        rawFileName = str(os.path.basename(self.fileName))
+        rawFileName = str(os.path.basename(warpedVRT.vrt.fileName))
         warpedXML = str(warpedVRT.read_xml())
         node0 = Node.create(warpedXML)
         node1 = node0.node('GDALWarpOptions')
