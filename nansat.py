@@ -630,13 +630,13 @@ class Nansat(Domain):
                     lin = rasterYSize
                 iNode.replaceAttribute('Line', str(lin))
 
-        # Write the modified elemements into VRT
-        self.vrt.write_xml(str(node0.rawxml()))
-
         # if data includes conplex number or scaleRation
         # and the algorithm is 'Average', raise error.
         if eResampleAlg == -1 and (scaleRatio or complexValue):
             raise Error('resize(eResampleAlg=-1) does not work. Use resize(eResampleAlg=0) or resize_lite()!!')
+        else:
+            # Write the modified elemements into VRT
+            self.vrt.write_xml(str(node0.rawxml()))
 
     def resize_lite(self, factor=1, width=None,
                     height=None, eResampleAlg=1):
