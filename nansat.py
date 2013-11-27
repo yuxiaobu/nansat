@@ -611,7 +611,8 @@ class Nansat(Domain):
                                                   str(newRasterYSize))
                     iNodeFileName = iNode2.node('SourceFilename')
                     if 'ScaleRatio' in iNode2.tagList():
-                        scaleRatio = True
+                        if iNode2.node('ScaleRatio').value != '1':
+                            scaleRatio = True
 
             # if method=-1, overwrite 'ComplexSource' to 'AveragedSource'
             if eResampleAlg == -1:
